@@ -1,2 +1,4 @@
 debug_output/
 listings.json
+__pycache__
+config.py

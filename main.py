@@ -2,9 +2,36 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import json
+import discord
+import asyncio
+from config import DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID
 
 DEBUG_OUTPUT_DIR = "debug_output"
-OUTPUT_JSON_FILE = "listings.json"  # Define the output JSON filename
+OUTPUT_JSON_FILE = "listings.json"
+
+async def send_discord_notification(message):
+    """Sends a message to the specified Discord channel."""
+    intents = discord.Intents.default()
+    client = discord.Client(intents=intents)
+
+    try:
+        @client.event
+        async def on_ready():
+            try:
+                channel = client.get_channel(DISCORD_CHANNEL_ID)
+                if channel:
+                    await channel.send(message)
+            finally:
+                await client.close()
+
+        await client.start(DISCORD_BOT_TOKEN)
+    except discord.LoginFailure:
+        print("Discord bot login failed. Please check your token.")
+    except Exception as e:
+        print(f"An error occurred while connecting to Discord: {e}")
+    finally:
+        if not client.is_closed():
+            await client.close()
 
 def scrape_website_one(url):
     print(f"Scraping URL: {url}")
@@ -20,10 +47,16 @@ def scrape_website_one(url):
         listing_containers = [item for item in elementor_divs if item.get('data-elementor-type') == 'jet-listing-items']
         print(f"Found {len(listing_containers)} potential listing containers.")
 
-        # Create the debug output directory if it doesn't exist
-        if not os.path.exists(DEBUG_OUTPUT_DIR):
-            os.makedirs(DEBUG_OUTPUT_DIR)
+        # Load existing listings
+        existing_listings = []
+        if os.path.exists(OUTPUT_JSON_FILE):
+            with open(OUTPUT_JSON_FILE, "r", encoding="utf-8") as f:
+                try:
+                    existing_listings = json.load(f)
+                except json.JSONDecodeError:
+                    print("Error decoding existing listings JSON. Starting with an empty list.")
 
+        newly_found = []
         incomplete_count = 0
         for item in listing_containers:
             url_element = item.find('div', class_='make-column-clickable-elementor')
@@ -36,19 +69,20 @@ def scrape_website_one(url):
             size = None
             available = None
 
-            if len(h2_elements) >= 4:  # Adjusted minimum h2 count
-                for h2 in h2_elements:
-                    text = h2.text.strip()
-                    if ',' in text and not address:  # Removed the 'not text.startswith('Möblerat')' condition
-                        address = text
-                    elif ':-/månad' in text and not price:
-                        price = text
-                    elif 'rum' in text and any(char.isdigit() for char in text) and not rooms:
-                        rooms = text
-                    elif 'kvm' in text and not size:
-                        size = text
+            for h2 in h2_elements:
+                text = h2.text.strip()
+                if ',' in text and not address:
+                    address = text
+                elif ':-/månad' in text and not price:
+                    price = text
+                elif 'rum' in text and any(char.isdigit() for char in text) and not rooms:
+                    rooms = text
+                elif 'kvm' in text and not size:
+                    size = text
+                elif not price and any(char.isdigit() for char in text) and ('kr/månad' in text or ':-/mån' in text or 'kr/mån' in text): # More flexible price matching
+                    price = text
+                # --- Add moreIntegrate Discord bot for new listing notifications price extraction logic here if needed based on incomplete_listing_1.html ---
 
-            # Logic to find availability
             available_element = item.find('h2', class_='elementor-heading-title', string=lambda text: text and 'Ledigt' in text)
             if available_element:
                 available = available_element.text.strip()
@@ -68,14 +102,17 @@ def scrape_website_one(url):
                                 address = prev_heading.text.strip()
 
             if url and address and price and rooms and size and available:
-                new_listings.append({
+                listing = {
                     'address': address,
                     'url': url,
                     'price': price,
                     'size': size,
                     'rooms': rooms,
                     'available': available
-                })
+                }
+                if listing not in existing_listings:
+                    new_listings.append(listing)
+                    newly_found.append(listing)
             else:
                 incomplete_count += 1
                 filename = os.path.join(DEBUG_OUTPUT_DIR, f"incomplete_listing_{incomplete_count}.html")
@@ -98,32 +135,43 @@ def scrape_website_one(url):
                 print(", ".join(missing_info))
                 print(f"Saved incomplete listing HTML to: {filename}")
 
-                # If only price is missing, add to listings with price as "N/A"
                 if url and address and not price and rooms and size and available:
-                    new_listings.append({
+                    listing_na = {
                         'address': address,
                         'url': url,
                         'price': 'N/A',
                         'size': size,
                         'rooms': rooms,
                         'available': available
-                    })
-                    print(f"Added listing {incomplete_count} with price as 'N/A'")
+                    }
+                    if listing_na not in existing_listings:
+                        new_listings.append(listing_na)
+                        newly_found.append(listing_na)
+                    print(f"Added incomplete listing {incomplete_count} with price as 'N/A'")
 
-        print(f"Found {len(new_listings)} new listings.")
-        return new_listings
+        print(f"Found {len(new_listings)} new listings (including those with N/A price).")
+        return new_listings, newly_found
+
     except requests.exceptions.RequestException as e:
-        print(f"Error scraping {url}: {e}")
-        return []
+        print(f"Error: {e}")
+        return [], []
+    return [], []
 
 if __name__ == "__main__":
     website_one_url = "https://www.subo.se/lediga-lagenheter/"
-    listings = scrape_website_one(website_one_url)
+    all_listings, newly_found_listings = scrape_website_one(website_one_url)
 
-    if listings:
-        # Write the listings to a JSON file
+    if all_listings:
+        # Write all listings to the JSON file
         with open(OUTPUT_JSON_FILE, "w", encoding="utf-8") as f:
-            json.dump(listings, f, indent=4, ensure_ascii=False)  #  ensure_ascii=False for non-ASCII characters
-        print(f"Saved {len(listings)} listings to {OUTPUT_JSON_FILE}")
+            json.dump(all_listings, f, indent=4, ensure_ascii=False)
+        print(f"Saved {len(all_listings)} listings to {OUTPUT_JSON_FILE}")
+
+        if newly_found_listings:
+            for listing in newly_found_listings:
+                message = f"Ny lägenhet hittad!\nAdress: {listing['address']}\nPris: {listing['price']}\nStorlek: {listing['size']}\nRum: {listing['rooms']}\nLedigt: {listing['available']}\nLänk: {listing['url']}"
+                asyncio.run(send_discord_notification(message))
+        else:
+            print("No new listings found.")
     else:
         print("No listings found.")
