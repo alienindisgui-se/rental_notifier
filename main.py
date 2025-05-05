@@ -35,17 +35,15 @@ async def send_discord_notification(listing):
                     embed = Embed(
                         title=format_notification_title(listing['url']),
                         url=listing['url'],
-                        color=0x00AE86,
-                        description=f"```{listing['address']}```"  # Move address to description for better spacing
+                        color=0x00AE86
                     )
                     
-                    # Group Rum/Storlek together without any spacing
+                    # Add all fields with updated inline configuration
+                    embed.add_field(name="Adress", value=f"```{listing['address']}```", inline=False)
                     embed.add_field(name="Rum", value=f"```{listing['rooms']}```", inline=True)
                     embed.add_field(name="Storlek", value=f"```{listing['size']}```", inline=True)
-                    
-                    # Group Pris/Ledigt together without any spacing
                     embed.add_field(name="Pris", value=f"```{listing['price']}```", inline=True)
-                    embed.add_field(name="Ledigt", value=f"```{listing['available']}```", inline=True)
+                    embed.add_field(name="Ledigt", value=f"```{listing['available']}```", inline=False)
 
                     # Handle image separately with retries
                     if image_url:
