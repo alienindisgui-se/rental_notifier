@@ -3,16 +3,27 @@ from bs4 import BeautifulSoup
 import os
 import json
 import discord
+from discord import Embed
 import asyncio
 from config import DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID
 
 DEBUG_OUTPUT_DIR = "debug_output"
 OUTPUT_JSON_FILE = "listings.json"
 
-async def send_discord_notification(message):
-    """Sends a message to the specified Discord channel."""
+async def send_discord_notification(listing):
+    """Sends an embed message to the specified Discord channel."""
     intents = discord.Intents.default()
     client = discord.Client(intents=intents)
+
+    # Validate and clean image URL
+    image_url = listing.get('image_url', '').strip()
+    if image_url:
+        # Add https if missing
+        if not image_url.startswith(('http://', 'https://')):
+            image_url = 'https://' + image_url
+        # Ensure proper URL encoding
+        image_url = image_url.replace(' ', '%20')
+        print(f"Processing image URL: {image_url}")
 
     try:
         @client.event
@@ -20,7 +31,45 @@ async def send_discord_notification(message):
             try:
                 channel = client.get_channel(DISCORD_CHANNEL_ID)
                 if channel:
-                    await channel.send(message)
+                    embed = Embed(
+                        title="🏠 Ny lägenhet hittad!",
+                        url=listing['url'],
+                        color=0x00AE86,
+                        description=f"```{listing['address']}```"  # Move address to description for better spacing
+                    )
+                    
+                    # Group Rum/Storlek together without any spacing
+                    embed.add_field(name="Rum", value=f"```{listing['rooms']}```", inline=True)
+                    embed.add_field(name="Storlek", value=f"```{listing['size']}```", inline=True)
+                    
+                    # Group Pris/Ledigt together without any spacing
+                    embed.add_field(name="Pris", value=f"```{listing['price']}```", inline=True)
+                    embed.add_field(name="Ledigt", value=f"```{listing['available']}```", inline=True)
+
+                    # Handle image separately with retries
+                    if image_url:
+                        max_retries = 3
+                        retry_count = 0
+                        while retry_count < max_retries:
+                            try:
+                                embed.set_image(url=image_url)
+                                print(f"Successfully set image URL on attempt {retry_count + 1}")
+                                break
+                            except Exception as e:
+                                retry_count += 1
+                                print(f"Failed to set image URL (attempt {retry_count}): {e}")
+                                if retry_count == max_retries:
+                                    print(f"Failed to set image after {max_retries} attempts for {listing['address']}")
+                                await asyncio.sleep(1)  # Wait before retry
+                    
+                    # Send the message with final status
+                    try:
+                        msg = await channel.send(embed=embed)
+                        print(f"Notification sent for {listing['address']}")
+                        if not msg.embeds[0].image:
+                            print(f"Warning: Image failed to attach for {listing['address']}")
+                    except Exception as e:
+                        print(f"Failed to send message: {e}")
             finally:
                 await client.close()
 
@@ -68,6 +117,46 @@ def scrape_website_one(url):
             rooms = None
             size = None
             available = None
+            image_url = None
+
+            # First try to find image URL from parent container's style tag
+            parent_item = item.find_parent('div', class_='jet-listing-grid__item')
+            if parent_item:
+                style_tag = parent_item.find('style')
+                if style_tag:
+                    style_content = style_tag.string
+                    if style_content and 'background-image' in style_content:
+                        import re
+                        match = re.search(r'background-image:\s*url\(["\'](.+?)["\']\)', style_content)
+                        if match:
+                            image_url = match.group(1)
+
+            # Fallback to existing methods if parent style tag didn't work
+            if not image_url:
+                style_tag = item.find('style')
+                if style_tag:
+                    style_content = style_tag.string
+                    if style_content and 'background-image' in style_content:
+                        match = re.search(r'background-image:\s*url\("([^"]+)"\)', style_content)
+                        if match:
+                            image_url = match.group(1)
+            
+            # Fallbacks if style tag method doesn't work
+            if not image_url:
+                # Try to find the image URL from the background-image style
+                image_container = item.find('div', class_='elementor-column-wrap')
+                if image_container and 'style' in image_container.attrs:
+                    style = image_container.attrs['style']
+                    if 'background-image' in style:
+                        match = re.search(r'url\("([^"]+)"\)', style)
+                        if match:
+                            image_url = match.group(1)
+            
+                # If still not found, try finding a direct img tag
+                if not image_url:
+                    img_tag = item.find('img')
+                    if img_tag and 'src' in img_tag.attrs:
+                        image_url = img_tag.attrs['src']
 
             for h2 in h2_elements:
                 text = h2.text.strip()
@@ -81,7 +170,6 @@ def scrape_website_one(url):
                     size = text
                 elif not price and any(char.isdigit() for char in text) and ('kr/månad' in text or ':-/mån' in text or 'kr/mån' in text): # More flexible price matching
                     price = text
-                # --- Add moreIntegrate Discord bot for new listing notifications price extraction logic here if needed based on incomplete_listing_1.html ---
 
             available_element = item.find('h2', class_='elementor-heading-title', string=lambda text: text and 'Ledigt' in text)
             if available_element:
@@ -108,7 +196,8 @@ def scrape_website_one(url):
                     'price': price,
                     'size': size,
                     'rooms': rooms,
-                    'available': available
+                    'available': available,
+                    'image_url': image_url  # Add image URL to the listing
                 }
                 if listing not in existing_listings:
                     new_listings.append(listing)
@@ -132,8 +221,35 @@ def scrape_website_one(url):
                     missing_info.append("size")
                 if not available:
                     missing_info.append("available")
+                if not image_url:
+                    missing_info.append("image_url")
                 print(", ".join(missing_info))
                 print(f"Saved incomplete listing HTML to: {filename}")
+
+                # Add image URL debugging information
+                if not image_url:
+                    print("Image URL debugging:")
+                    style_tag = item.find('style')
+                    if style_tag:
+                        print(f"Style tag content: {style_tag.string}")
+                    
+                    image_container = item.find('div', class_='elementor-column-wrap')
+                    if image_container and 'style' in image_container.attrs:
+                        print(f"Image container style: {image_container.attrs['style']}")
+                    
+                    img_tag = item.find('img')
+                    if img_tag:
+                        print(f"Direct img tag: {img_tag}")
+
+                    # Save detailed image debugging to a separate file
+                    debug_image_file = os.path.join(DEBUG_OUTPUT_DIR, f"image_debug_{incomplete_count}.txt")
+                    with open(debug_image_file, "w", encoding="utf-8") as f:
+                        f.write("Style tag content:\n")
+                        f.write(str(style_tag.string if style_tag else "Not found") + "\n\n")
+                        f.write("Image container style:\n")
+                        f.write(str(image_container.attrs['style'] if image_container and 'style' in image_container.attrs else "Not found") + "\n\n")
+                        f.write("Direct img tag:\n")
+                        f.write(str(img_tag) if img_tag else "Not found")
 
                 if url and address and not price and rooms and size and available:
                     listing_na = {
@@ -142,7 +258,8 @@ def scrape_website_one(url):
                         'price': 'N/A',
                         'size': size,
                         'rooms': rooms,
-                        'available': available
+                        'available': available,
+                        'image_url': image_url  # Add image URL here too
                     }
                     if listing_na not in existing_listings:
                         new_listings.append(listing_na)
@@ -162,15 +279,14 @@ if __name__ == "__main__":
     all_listings, newly_found_listings = scrape_website_one(website_one_url)
 
     if all_listings:
-        # Write all listings to the JSON file
+        # Write all listings to the JSON file with compact formatting
         with open(OUTPUT_JSON_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_listings, f, indent=4, ensure_ascii=False)
+            json.dump(all_listings, f, indent=2, ensure_ascii=False, separators=(',', ': '))
         print(f"Saved {len(all_listings)} listings to {OUTPUT_JSON_FILE}")
 
         if newly_found_listings:
             for listing in newly_found_listings:
-                message = f"Ny lägenhet hittad!\nAdress: {listing['address']}\nPris: {listing['price']}\nStorlek: {listing['size']}\nRum: {listing['rooms']}\nLedigt: {listing['available']}\nLänk: {listing['url']}"
-                asyncio.run(send_discord_notification(message))
+                asyncio.run(send_discord_notification(listing))
         else:
             print("No new listings found.")
     else:
