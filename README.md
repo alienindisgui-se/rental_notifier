@@ -13,17 +13,40 @@ Scrapes rental listings and sends Discord messages.
 ## Testing
 
 ### Debug Mode
-The application supports a debug mode for testing listing removals without scraping the website.
+The application supports a debug mode to test how listings are handled when marked as inactive.
 
 ```bash
-# Test removal of a specific listing
+# Mark a listing as inactive
 python main.py --debug --remove "Example Address, 123"
+
+# Run again to see how inactive listings are handled
+python main.py
 ```
 
 #### How it works
-- Debug mode loads existing listings from `listings.json`
-- The `--remove` flag marks a specified listing as inactive
-- This triggers the same notification process as a real removal
-- Useful for testing Discord notifications and message updates
+- Use `--debug --remove` to mark a listing as inactive in `listings.json`
+- Running the script again will:
+  - Load all listings including inactive ones
+  - Update Discord messages for inactive listings (strikethrough, red color)
+  - Keep inactive listings marked as removed
+- Useful for testing how the script handles removed listings over multiple runs
 
-**Note:** Make sure you have valid listings in `listings.json` before running debug mode.
+**Note:** The script will update existing Discord messages rather than sending new ones for inactive listings.
+
+### Listing States
+
+#### Active (true)
+- New listings start as active
+- Appears normally in Discord (green color)
+- Can be scraped and updated
+
+#### Inactive (false)
+Can be triggered in two ways:
+1. **Automatic**: Listing disappears from website during scraping
+2. **Manual**: Using `--debug --remove` flag
+
+Once inactive:
+- Listing stays inactive permanently
+- Discord message shows strikethrough and red color
+- Won't be reactivated even if found again in scraping
+- Useful for manually removing test/duplicate listings
