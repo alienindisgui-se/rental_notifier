@@ -6,6 +6,7 @@ import discord
 from discord import Embed
 import asyncio
 from config import DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID
+from utils import format_notification_title  # Update import to use relative path
 
 DEBUG_OUTPUT_DIR = "debug_output"
 OUTPUT_JSON_FILE = "listings.json"
@@ -32,7 +33,7 @@ async def send_discord_notification(listing):
                 channel = client.get_channel(DISCORD_CHANNEL_ID)
                 if channel:
                     embed = Embed(
-                        title="🏠 Ny lägenhet hittad!",
+                        title=format_notification_title(listing['url']),
                         url=listing['url'],
                         color=0x00AE86,
                         description=f"```{listing['address']}```"  # Move address to description for better spacing
