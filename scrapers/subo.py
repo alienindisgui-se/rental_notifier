@@ -17,7 +17,7 @@ class SuboScraper(RentalScraper):
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            current_addresses = set()
+            current_urls = set()
             newly_found = []
             filtered_listings = []
             reactivated = []
@@ -65,16 +65,16 @@ class SuboScraper(RentalScraper):
                     elif 'Ledigt' in text and not listing_data['available']:
                         listing_data['available'] = text
 
-                # Track current addresses
-                if listing_data['address'] and listing_data['url']:
-                    current_addresses.add(listing_data['address'])
+                # Track current URLs instead of addresses
+                if listing_data['url']:
+                    current_urls.add(listing_data['url'])
 
                 # Create listing if we have all required fields
                 if all(v for k, v in listing_data.items() if k != 'price'):  # Price can be N/A
                     listing = self.create_listing(**listing_data)
                     
-                    # Check if listing already exists
-                    existing = next((l for l in existing_listings if l['address'] == listing['address']), None)
+                    # Check if listing already exists by URL
+                    existing = next((l for l in existing_listings if l['url'] == listing['url']), None)
                     if existing:
                         if not existing.get('active', True):
                             continue
@@ -89,10 +89,10 @@ class SuboScraper(RentalScraper):
                         filtered_listings.append(listing)
                         newly_found.append(listing)
 
-            # Handle inactive listings
+            # Handle inactive listings using URL
             removed_listings = []
             for listing in existing_listings:
-                if listing['address'] not in current_addresses and listing.get('active', True):
+                if listing['source'] == 'SuboScraper' and listing['url'] not in current_urls and listing.get('active', True):
                     listing['active'] = False
                     listing['removed_at'] = datetime.now().strftime('%Y-%m-%d')
                     listing['last_updated'] = datetime.now().isoformat()

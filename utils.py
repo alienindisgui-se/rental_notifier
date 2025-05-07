@@ -3,6 +3,7 @@ from urllib.parse import urlparse
 
 COMPANY_MAPPINGS = {
     'subo.se': 'Sundsvalls Bostäder',
+    'dios.se': 'Diös Fastigheter',
     # Add more companies here as needed
 }
 

@@ -12,24 +12,36 @@ from config import DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID
 from utils import format_notification_title  # Update import to use relative path
 from datetime import datetime
 from scrapers.subo import SuboScraper
+from scrapers.dios import DiosScraper  # Updated import path
 
 DEBUG_OUTPUT_DIR = "debug_output"
 OUTPUT_JSON_FILE = "listings.json"
 
 # Initialize scrapers
-SCRAPERS = [
-    SuboScraper(),
-    # Add more scrapers here as they're implemented
-]
+ALL_SCRAPERS = {
+    'subo': SuboScraper(),
+    'dios': DiosScraper()
+}
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', action='store_true', help='Run in debug mode')
     parser.add_argument('--remove', type=str, help='Address of listing to simulate removal')
     parser.add_argument('--recheck', action='store_true', help='Recheck inactive listings and reactivate if available')
-    parser.add_argument('--checkimages', action='store_true', help='Check all messages for missing images')
     parser.add_argument('--clear', action='store_true', help='Delete all existing Discord messages')
+    parser.add_argument('--subo', action='store_true', help='Run only SUBO scraper')
+    parser.add_argument('--dios', action='store_true', help='Run only Dios scraper')
     return parser.parse_args()
+
+def get_active_scrapers(args):
+    if args.subo:
+        print("Running SUBO scraper only")
+        return [ALL_SCRAPERS['subo']]
+    elif args.dios:
+        print("Running Dios scraper only")
+        return [ALL_SCRAPERS['dios']]
+    print("Running all scrapers")
+    return ALL_SCRAPERS.values()
 
 class DiscordNotifier:
     def __init__(self, token, channel_id):
@@ -94,7 +106,7 @@ class DiscordNotifier:
         embed.add_field(name=name_format.format("Adress"), value=value_format.format(listing['address']), inline=False)
         embed.add_field(name=name_format.format("Rum"), value=value_format.format(listing['rooms']), inline=True)
         embed.add_field(name=name_format.format("Storlek"), value=value_format.format(listing['size']), inline=True)
-        embed.add_field(name=name_format.format("Pris"), value=value_format.format(listing['price']), inline=True)
+        embed.add_field(name=name_format.format("Hyra"), value=value_format.format(listing['price']), inline=True)
         embed.add_field(name=name_format.format("Ledigt"), value=value_format.format(available_text), inline=False)
 
         # Handle image
@@ -109,10 +121,10 @@ class DiscordNotifier:
             # Write updated listings to JSON immediately after sending message
             with open(OUTPUT_JSON_FILE, "r+", encoding="utf-8") as f:
                 listings = json.load(f)
-                # Update or add the listing with message info
+                # Update or add the listing with message info using URL as unique identifier
                 found = False
                 for idx, l in enumerate(listings):
-                    if l['address'] == listing['address']:
+                    if l['url'] == listing['url']:  # Changed from address to url
                         listings[idx]['message_id'] = msg.id
                         listings[idx]['channel_id'] = self.channel_id
                         found = True
@@ -153,7 +165,7 @@ class DiscordNotifier:
             embed.add_field(name="~~Adress~~", value=f"```{listing['address']}```", inline=False)
             embed.add_field(name="~~Rum~~", value=f"```{listing['rooms']}```", inline=True)
             embed.add_field(name="~~Storlek~~", value=f"```{listing['size']}```", inline=True)
-            embed.add_field(name="~~Pris~~", value=f"```{listing['price']}```", inline=True)
+            embed.add_field(name="~~Hyra~~", value=f"```{listing['price']}```", inline=True)
             embed.add_field(name="~~Ledigt~~", value=f"```Borttagen {current_date}```", inline=False)
             
             await message.edit(embed=embed)
@@ -180,7 +192,7 @@ class DiscordNotifier:
             embed.add_field(name="Adress", value=f"```{listing['address']}```", inline=False)
             embed.add_field(name="Rum", value=f"```{listing['rooms']}```", inline=True)
             embed.add_field(name="Storlek", value=f"```{listing['size']}```", inline=True)
-            embed.add_field(name="Pris", value=f"```{listing['price']}```", inline=True)
+            embed.add_field(name="Hyra", value=f"```{listing['price']}```", inline=True)
             embed.add_field(name="Ledigt", value=f"```{listing['available']}```", inline=False)
 
             # Set image
@@ -193,43 +205,32 @@ class DiscordNotifier:
         except Exception as e:
             print(f"Error updating reactivated listing: {e}")
 
-    async def check_message_images(self, listing):
-        if 'message_id' not in listing:
-            return
-            
-        await self.ensure_connected()
-        
-        try:
-            message = await self.channel.fetch_message(listing['message_id'])
-            embed = message.embeds[0]
-            
-            if not embed.image or not embed.image.url:
-                print(f"⚠️ Missing image for: {listing['address']}")
-                print(f"Expected image URL: {listing.get('image_url', 'No URL stored')}")
-                return False
-            return True
-        except Exception as e:
-            print(f"Error checking images for {listing['address']}: {e}")
-            return False
-
     async def clear_messages(self, listings):
         await self.ensure_connected()
         deleted_count = 0
         
+        # Collect all message IDs first
+        message_ids = [(listing.get('message_id'), listing) for listing in listings if listing.get('message_id')]
+        print(f"Found {len(message_ids)} message IDs to delete")
+        
+        for msg_id, listing in message_ids:
+            try:
+                message = await self.channel.fetch_message(msg_id)
+                await message.delete()
+                deleted_count += 1
+                print(f"Deleted message ID for: {listing['address']} | {listing['size']} | {listing['rooms']}")
+                
+            except Exception as e:
+                print(f"Failed to delete message for {listing['address']}: {e}")
+        
+        # Clear message IDs from listings
         for listing in listings:
             if 'message_id' in listing:
-                try:
-                    message = await self.channel.fetch_message(listing['message_id'])
-                    await message.delete()
-                    del listing['message_id']  # Remove message_id from the listing
-                    if 'channel_id' in listing:
-                        del listing['channel_id']  # Also remove channel_id reference
-                    deleted_count += 1
-                    print(f"Deleted message for: {listing['address']}")
-                except Exception as e:
-                    print(f"Failed to delete message for {listing['address']}: {e}")
+                del listing['message_id']
+            if 'channel_id' in listing:
+                del listing['channel_id']
         
-        # Write updated listings back to JSON without message IDs
+        # Write updated listings back to JSON
         with open(OUTPUT_JSON_FILE, "w", encoding="utf-8") as f:
             json.dump(listings, f, indent=2, ensure_ascii=False)
             
@@ -244,73 +245,71 @@ async def handle_discord_operations(new_listings=None, removed_listings=None, re
     
     try:
         await notifier.ensure_connected()
-        
-        if reactivated_listings:
-            for listing in reactivated_listings:
-                await notifier.update_reactivated_listing(listing)
-                
-        if removed_listings:
-            for listing in removed_listings:
-                await notifier.update_removed_listing(listing)
+        print(f"\nProcessing Discord notifications:")
         
         if new_listings:
+            print(f"Sending {len(new_listings)} new listings...")
             for listing in new_listings:
-                await notifier.send_notification(listing)
+                print(f"Sending notification for: {listing['address']} | {listing['size']} | {listing['rooms']}")
+                message = await notifier.send_notification(listing)
+                if message:
+                    listing['message_id'] = message.id
+                    listing['channel_id'] = message.channel.id
+                else:
+                    print(f"Failed to send notification for: {listing['address']}")
+                await asyncio.sleep(1)  # 1 second delay between messages
+        
+        if reactivated_listings:
+            print(f"Updating {len(reactivated_listings)} reactivated listings...")
+            for listing in reactivated_listings:
+                await notifier.update_reactivated_listing(listing)
+                await asyncio.sleep(1)  # 1 second delay between updates
+                
+        if removed_listings:
+            print(f"Updating {len(removed_listings)} removed listings...")
+            for listing in removed_listings:
+                await notifier.update_removed_listing(listing)
+                await asyncio.sleep(1)  # 1 second delay between updates
+
+    except Exception as e:
+        print(f"Error in Discord operations: {e}")
     finally:
         await notifier.close()
 
-async def check_all_images(listings, notifier):
-    results = []
-    for listing in listings:
-        has_image = await notifier.check_message_images(listing)
-        results.append((listing['address'], has_image))
-    return results
-
-def scrape_all_sites(existing_listings):
+def scrape_all_sites(existing_listings, scrapers):
+    print(f"\nStarting scrape with {len(existing_listings)} existing listings")
     all_listings = []
     all_new = []
     all_removed = []
     all_reactivated = []
 
-    for scraper in SCRAPERS:
+    for scraper in scrapers:
+        print(f"\nRunning {scraper.__class__.__name__}")
         listings, new, removed, reactivated = scraper.scrape(existing_listings)
         all_listings.extend(listings)
         all_new.extend(new)
         all_removed.extend(removed)
         all_reactivated.extend(reactivated)
         
+    print(f"\nScraping complete:")
+    print(f"Total listings: {len(all_listings)}")
+    print(f"New listings: {len(all_new)}")
+    print(f"Removed: {len(all_removed)}")
+    print(f"Reactivated: {len(all_reactivated)}")
+    
     return all_listings, all_new, all_removed, all_reactivated
 
 if __name__ == "__main__":
     args = parse_args()
     
-    if args.checkimages:
-        if os.path.exists(OUTPUT_JSON_FILE):
+    # Load existing listings at the start
+    existing_listings = []
+    if os.path.exists(OUTPUT_JSON_FILE):
+        try:
             with open(OUTPUT_JSON_FILE, "r", encoding="utf-8") as f:
-                try:
-                    listings = json.load(f)
-                    print(f"Checking images for {len(listings)} listings...")
-                    notifier = DiscordNotifier(DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID)
-                    
-                    async def run_image_check():
-                        await notifier.ensure_connected()
-                        results = await check_all_images(listings, notifier)
-                        await notifier.close()
-                        return results
-
-                    results = asyncio.run(run_image_check())
-                    missing_images = [addr for addr, has_image in results if not has_image]
-                    
-                    if missing_images:
-                        print("\nListings with missing images:")
-                        for addr in missing_images:
-                            print(f"- {addr}")
-                    else:
-                        print("\nAll listings have images! 🎉")
-                        
-                except json.JSONDecodeError:
-                    print("Error loading listings.json")
-        exit(0)
+                existing_listings = json.load(f)
+        except json.JSONDecodeError:
+            print("Error loading listings.json")
 
     if args.clear:
         if os.path.exists(OUTPUT_JSON_FILE):
@@ -361,11 +360,13 @@ if __name__ == "__main__":
                     listing['active'] = False
                     listing['removed_at'] = datetime.now().strftime("%Y-%m-%d")
                     removed_listings.append(listing)
-                    break  # Exit once we find the matching listing
+                    break
     else:
-        # Normal scraping mode - now uses all scrapers
+        # Normal scraping mode - now uses selected scrapers
+        active_scrapers = get_active_scrapers(args)
         all_listings, newly_found_listings, removed_listings, reactivated = scrape_all_sites(
-            existing_listings if 'existing_listings' in locals() else []
+            existing_listings,
+            active_scrapers
         )
 
     # Always write the full listings to JSON
