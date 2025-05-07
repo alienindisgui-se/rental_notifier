@@ -4,7 +4,9 @@ import os
 import json
 import discord
 from discord import Embed
+from discord import Embed
 import asyncio
+import argparse
 import argparse
 from config import DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID
 from utils import format_notification_title  # Update import to use relative path
