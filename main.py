@@ -9,14 +9,24 @@ import argparse
 from config import DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID
 from utils import format_notification_title  # Update import to use relative path
 from datetime import datetime
+from scrapers.subo import SuboScraper
 
 DEBUG_OUTPUT_DIR = "debug_output"
 OUTPUT_JSON_FILE = "listings.json"
+
+# Initialize scrapers
+SCRAPERS = [
+    SuboScraper(),
+    # Add more scrapers here as they're implemented
+]
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', action='store_true', help='Run in debug mode')
     parser.add_argument('--remove', type=str, help='Address of listing to simulate removal')
+    parser.add_argument('--recheck', action='store_true', help='Recheck inactive listings and reactivate if available')
+    parser.add_argument('--checkimages', action='store_true', help='Check all messages for missing images')
+    parser.add_argument('--clear', action='store_true', help='Delete all existing Discord messages')
     return parser.parse_args()
 
 class DiscordNotifier:
@@ -148,16 +158,95 @@ class DiscordNotifier:
         except Exception as e:
             print(f"Error updating removed listing: {e}")
 
+    async def update_reactivated_listing(self, listing):
+        if 'message_id' not in listing:
+            return
+            
+        await self.ensure_connected()
+        
+        try:
+            message = await self.channel.fetch_message(listing['message_id'])
+            
+            # Create entirely new embed instead of modifying existing one
+            embed = Embed(
+                title=format_notification_title(listing['url']),
+                url=listing['url'],
+                color=discord.Color.green()
+            )
+            
+            # Add fields
+            embed.add_field(name="Adress", value=f"```{listing['address']}```", inline=False)
+            embed.add_field(name="Rum", value=f"```{listing['rooms']}```", inline=True)
+            embed.add_field(name="Storlek", value=f"```{listing['size']}```", inline=True)
+            embed.add_field(name="Pris", value=f"```{listing['price']}```", inline=True)
+            embed.add_field(name="Ledigt", value=f"```{listing['available']}```", inline=False)
+
+            # Set image
+            if listing.get('image_url'):
+                embed.set_image(url=listing.get('image_url'))
+                print(f"Setting image for reactivated listing: {listing['image_url']}")
+            
+            await message.edit(embed=embed)
+            print(f"Successfully updated reactivated listing with image: {listing['address']}")
+        except Exception as e:
+            print(f"Error updating reactivated listing: {e}")
+
+    async def check_message_images(self, listing):
+        if 'message_id' not in listing:
+            return
+            
+        await self.ensure_connected()
+        
+        try:
+            message = await self.channel.fetch_message(listing['message_id'])
+            embed = message.embeds[0]
+            
+            if not embed.image or not embed.image.url:
+                print(f"⚠️ Missing image for: {listing['address']}")
+                print(f"Expected image URL: {listing.get('image_url', 'No URL stored')}")
+                return False
+            return True
+        except Exception as e:
+            print(f"Error checking images for {listing['address']}: {e}")
+            return False
+
+    async def clear_messages(self, listings):
+        await self.ensure_connected()
+        deleted_count = 0
+        
+        for listing in listings:
+            if 'message_id' in listing:
+                try:
+                    message = await self.channel.fetch_message(listing['message_id'])
+                    await message.delete()
+                    del listing['message_id']  # Remove message_id from the listing
+                    if 'channel_id' in listing:
+                        del listing['channel_id']  # Also remove channel_id reference
+                    deleted_count += 1
+                    print(f"Deleted message for: {listing['address']}")
+                except Exception as e:
+                    print(f"Failed to delete message for {listing['address']}: {e}")
+        
+        # Write updated listings back to JSON without message IDs
+        with open(OUTPUT_JSON_FILE, "w", encoding="utf-8") as f:
+            json.dump(listings, f, indent=2, ensure_ascii=False)
+            
+        return deleted_count
+
     async def close(self):
         if self.client:
             await self.client.close()
 
-async def handle_discord_operations(new_listings=None, removed_listings=None):
+async def handle_discord_operations(new_listings=None, removed_listings=None, reactivated_listings=None):
     notifier = DiscordNotifier(DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID)
     
     try:
         await notifier.ensure_connected()
         
+        if reactivated_listings:
+            for listing in reactivated_listings:
+                await notifier.update_reactivated_listing(listing)
+                
         if removed_listings:
             for listing in removed_listings:
                 await notifier.update_removed_listing(listing)
@@ -168,209 +257,88 @@ async def handle_discord_operations(new_listings=None, removed_listings=None):
     finally:
         await notifier.close()
 
-def scrape_website_one(url):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
+async def check_all_images(listings, notifier):
+    results = []
+    for listing in listings:
+        has_image = await notifier.check_message_images(listing)
+        results.append((listing['address'], has_image))
+    return results
 
-        new_listings = []
-        elementor_divs = soup.find_all('div', class_='elementor')
-        listing_containers = [item for item in elementor_divs if item.get('data-elementor-type') == 'jet-listing-items']
+def scrape_all_sites(existing_listings):
+    all_listings = []
+    all_new = []
+    all_removed = []
+    all_reactivated = []
 
-        # Load all existing listings - we'll keep these and just update their status
-        existing_listings = []
-        if os.path.exists(OUTPUT_JSON_FILE):
-            with open(OUTPUT_JSON_FILE, "r", encoding="utf-8") as f:
-                try:
-                    existing_listings = json.load(f)
-                except json.JSONDecodeError:
-                    pass
-
-        # Create a set of current addresses before starting scraping
-        current_addresses = set()
-
-        newly_found = []
-        incomplete_count = 0
-
-        for item in listing_containers:
-            url_element = item.find('div', class_='make-column-clickable-elementor')
-            url = url_element.get('data-column-clickable') if url_element else None
-            h2_elements = item.find_all('h2', class_='elementor-heading-title')
-
-            address = None
-            price = None
-            rooms = None
-            size = None
-            available = None
-            image_url = None
-
-            # First try to find image URL from parent container's style tag
-            parent_item = item.find_parent('div', class_='jet-listing-grid__item')
-            if parent_item:
-                style_tag = parent_item.find('style')
-                if style_tag:
-                    style_content = style_tag.string
-                    if style_content and 'background-image' in style_content:
-                        import re
-                        match = re.search(r'background-image:\s*url\(["\'](.+?)["\']\)', style_content)
-                        if match:
-                            image_url = match.group(1)
-
-            # Fallback to existing methods if parent style tag didn't work
-            if not image_url:
-                style_tag = item.find('style')
-                if style_tag:
-                    style_content = style_tag.string
-                    if style_content and 'background-image' in style_content:
-                        match = re.search(r'background-image:\s*url\("([^"]+)"\)', style_content)
-                        if match:
-                            image_url = match.group(1)
-            
-            # Fallbacks if style tag method doesn't work
-            if not image_url:
-                # Try to find the image URL from the background-image style
-                image_container = item.find('div', class_='elementor-column-wrap')
-                if image_container and 'style' in image_container.attrs:
-                    style = image_container.attrs['style']
-                    if 'background-image' in style:
-                        match = re.search(r'url\("([^"]+)"\)', style)
-                        if match:
-                            image_url = match.group(1)
-            
-                # If still not found, try finding a direct img tag
-                if not image_url:
-                    img_tag = item.find('img')
-                    if img_tag and 'src' in img_tag.attrs:
-                        image_url = img_tag.attrs['src']
-
-            for h2 in h2_elements:
-                text = h2.text.strip()
-                if ',' in text and not address:
-                    address = text
-                elif ':-/månad' in text and not price:
-                    price = text
-                elif 'rum' in text and any(char.isdigit() for char in text) and not rooms:
-                    rooms = text
-                elif 'kvm' in text and not size:
-                    size = text
-                elif not price and any(char.isdigit() for char in text) and ('kr/månad' in text or ':-/mån' in text or 'kr/mån' in text): # More flexible price matching
-                    price = text
-
-            available_element = item.find('h2', class_='elementor-heading-title', string=lambda text: text and 'Ledigt' in text)
-            if available_element:
-                available = available_element.text.strip()
-            else:
-                ledig_button = item.find('div', class_='elementor-widget-button')
-                if ledig_button:
-                    ledig_span = ledig_button.find('span', class_='elementor-button-text')
-                    if ledig_span and ledig_span.text.strip() == 'Ledig':
-                        next_heading = ledig_button.find_parent('div', class_='elementor-element').find_next_sibling('div').find('h2', class_='elementor-heading-title') if ledig_button.find_parent('div', class_='elementor-element').find_next_sibling('div') else None
-                        if next_heading and 'från' in next_heading.text:
-                            available = next_heading.text.strip()
-                        else:
-                            available = 'Ledig'
-                        if not address:
-                            prev_heading = ledig_button.find_parent('div', class_='elementor-element').find_previous_sibling('div').find('h2', class_='elementor-heading-title') if ledig_button.find_parent('div', class_='elementor-element').find_previous_sibling('div') else None
-                            if prev_heading and ',' in prev_heading.text:
-                                address = prev_heading.text.strip()
-
-            if url and address:  # Track address as soon as we find it
-                current_addresses.add(address)
-
-            if url and address and price and rooms and size and available:
-                # Check if listing already exists
-                existing_listing = next((l for l in existing_listings if l['address'] == address), None)
-                
-                if existing_listing:
-                    # Skip if manually marked as inactive
-                    if existing_listing.get('active') is False:
-                        continue
-                    
-                    # Update existing listing while preserving message_id
-                    message_id = existing_listing.get('message_id')
-                    existing_listing.update({
-                        'url': url,
-                        'price': price,
-                        'size': size,
-                        'rooms': rooms,
-                        'available': available,
-                        'image_url': image_url,
-                        'active': True
-                    })
-                    if message_id:
-                        existing_listing['message_id'] = message_id
-                else:
-                    # Create new listing
-                    new_listing = {
-                        'address': address,
-                        'url': url,
-                        'price': price,
-                        'size': size,
-                        'rooms': rooms,
-                        'available': available,
-                        'image_url': image_url,
-                        'active': True
-                    }
-                    existing_listings.append(new_listing)
-                    newly_found.append(new_listing)
-            else:
-                incomplete_count += 1
-
-                if url and address and not price and rooms and size and available:
-                    existing_listing = next((l for l in existing_listings if l['address'] == address), None)
-                    
-                    # Skip if manually deactivated
-                    if existing_listing and existing_listing.get('active') is False:
-                        continue
-
-                    listing_na = {
-                        'address': address,
-                        'url': url,
-                        'price': 'N/A',
-                        'size': size,
-                        'rooms': rooms,
-                        'available': available,
-                        'image_url': image_url,
-                        'active': True
-                    }
-
-                    if existing_listing:
-                        # Update existing listing while preserving message_id
-                        message_id = existing_listing.get('message_id')
-                        existing_listing.update(listing_na)
-                        if message_id:
-                            existing_listing['message_id'] = message_id
-                    elif listing_na not in existing_listings:
-                        existing_listings.append(listing_na)
-                        newly_found.append(listing_na)
-
-        # After scraping, mark listings as inactive only if not found
-        for listing in existing_listings:
-            # Only change status if:
-            # 1. Address not found in current scrape
-            # 2. Not already manually deactivated
-            if listing['address'] not in current_addresses and listing.get('active') is not False:
-                listing['active'] = False
-                listing['removed_at'] = datetime.now().strftime("%Y-%m-%d")
-
-        # Find listings that need to be marked as removed
-        removed_listings = [l for l in existing_listings 
-                          if l.get('message_id') and not l['active']]
+    for scraper in SCRAPERS:
+        listings, new, removed, reactivated = scraper.scrape(existing_listings)
+        all_listings.extend(listings)
+        all_new.extend(new)
+        all_removed.extend(removed)
+        all_reactivated.extend(reactivated)
         
-        print(f"Found {len(newly_found)} new listings, {len(removed_listings)} removed/inactive")
-
-        return existing_listings, newly_found, removed_listings
-
-    except requests.exceptions.RequestException as e:
-        return [], [], []
-    return [], [], []
+    return all_listings, all_new, all_removed, all_reactivated
 
 if __name__ == "__main__":
     args = parse_args()
-    website_one_url = "https://www.subo.se/lediga-lagenheter/"
     
+    if args.checkimages:
+        if os.path.exists(OUTPUT_JSON_FILE):
+            with open(OUTPUT_JSON_FILE, "r", encoding="utf-8") as f:
+                try:
+                    listings = json.load(f)
+                    print(f"Checking images for {len(listings)} listings...")
+                    notifier = DiscordNotifier(DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID)
+                    
+                    async def run_image_check():
+                        await notifier.ensure_connected()
+                        results = await check_all_images(listings, notifier)
+                        await notifier.close()
+                        return results
+
+                    results = asyncio.run(run_image_check())
+                    missing_images = [addr for addr, has_image in results if not has_image]
+                    
+                    if missing_images:
+                        print("\nListings with missing images:")
+                        for addr in missing_images:
+                            print(f"- {addr}")
+                    else:
+                        print("\nAll listings have images! 🎉")
+                        
+                except json.JSONDecodeError:
+                    print("Error loading listings.json")
+        exit(0)
+
+    if args.clear:
+        if os.path.exists(OUTPUT_JSON_FILE):
+            try:
+                # First load and store current listings
+                with open(OUTPUT_JSON_FILE, "r", encoding="utf-8") as f:
+                    listings = json.load(f)
+                
+                if listings:
+                    print(f"Clearing {len(listings)} messages...")
+                    notifier = DiscordNotifier(DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID)
+                    
+                    async def run_clear():
+                        await notifier.ensure_connected()
+                        deleted = await notifier.clear_messages(listings)
+                        await notifier.close()
+                        return deleted
+
+                    deleted_count = asyncio.run(run_clear())
+                    print(f"Successfully deleted {deleted_count} messages")
+                
+                # After deleting messages, empty the JSON file
+                with open(OUTPUT_JSON_FILE, "w", encoding="utf-8") as f:
+                    json.dump([], f, indent=2, ensure_ascii=False)
+                    print("Successfully emptied listings.json")
+                    
+            except Exception as e:
+                print(f"Error during clear operation: {e}")
+        exit(0)
+
     if args.debug:
         # Debug mode - use existing listings as the base
         all_listings = []
@@ -393,16 +361,19 @@ if __name__ == "__main__":
                     removed_listings.append(listing)
                     break  # Exit once we find the matching listing
     else:
-        # Normal scraping mode
-        all_listings, newly_found_listings, removed_listings = scrape_website_one(website_one_url)
+        # Normal scraping mode - now uses all scrapers
+        all_listings, newly_found_listings, removed_listings, reactivated = scrape_all_sites(
+            existing_listings if 'existing_listings' in locals() else []
+        )
 
     # Always write the full listings to JSON
     if all_listings:
         with open(OUTPUT_JSON_FILE, "w", encoding="utf-8") as f:
             json.dump(all_listings, f, indent=2, ensure_ascii=False)
         
-        if removed_listings or newly_found_listings:
+        if removed_listings or newly_found_listings or reactivated:
             asyncio.run(handle_discord_operations(
                 new_listings=newly_found_listings,
-                removed_listings=removed_listings
+                removed_listings=removed_listings,
+                reactivated_listings=reactivated
             ))
