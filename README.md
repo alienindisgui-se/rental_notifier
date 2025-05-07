@@ -10,29 +10,39 @@ Scrapes rental listings and sends Discord messages.
 * Implement [![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?logo=github-actions&logoColor=white)](https://docs.github.com/en/actions) for automation.
 * Add support for more websites.
 
-## Testing
+| **Status** | **Landlord**                              | **Link**                                                           |
+|------------|-------------------------------------------|--------------------------------------------------------------------|
+| ⛔         | Mitthem AB                                 | [mitthem.se](https://www.mitthem.se)                              |
+| ✅         | Sundsvalls Bostäder                        | [subo.se](https://www.subo.se)                                    |
+| ⛔         | Balder                                     | [balder.se](https://www.balder.se)                                |
+| ⛔         | Zetterkvist                                | [zetterkvist.com](https://www.zetterkvist.com)                    |
+| ✅         | Diös Fastigheter                           | [dios.se](https://www.dios.se)                                    |
+| ⛔         | HSB Mitt                                   | [hsb.se](https://www.hsb.se)                                      |
+| ⛔         | Sidsjö Fastigheter                         | [sidsjofastigheter.se](https://www.sidsjofastigheter.se)          |
+| ⛔         | Tvättbjörnen Förvaltning AB                | [tvattbjornen.se](https://www.tvattbjornen.se)                    |
+| ⛔         | KlaraBo                                    | [klarabo.se](https://www.klarabo.se)                              |
+| ⛔         | Lilium Fastigheter                         | [liliumab.se](https://www.liliumab.se)                            |
+| ⛔         | Hedern Fastigheter AB                      | [hedern.se](https://hedern.se)                                    |
+| ⛔         | Neobo Fastigheter AB                       | [neobo.se](https://www.neobo.se)                                  |
+| ⛔         | Statera Fastigheter                        | [staterafastigheter.se](https://www.staterafastigheter.se)        |
+| ⛔         | Svedin AB                                  | [svedins.se](https://www.svedins.se)                              |
+| ⛔         | SveaHem AB                                 | [sveahem.se](https://www.sveahem.se)                              |
+| ⛔         | Prima Bostäder Sundsvall AB                | [primabostader.se](https://primabostader.se)                      |
+| ⛔         | Sveafastigheter                            | [sveafastigheter.se](https://sveafastigheter.se)                  |
 
-### Debug Mode
-The application supports a debug mode to test how listings are handled when marked as inactive.
+
+## Command-line Arguments
+
+The following arguments are supported:
 
 ```bash
-# Mark a listing as inactive
-python main.py --debug --remove "Example Address, 123"
-
-# Run again to see how inactive listings are handled
-python main.py
+--debug            Run in debug mode
+--remove ADDRESS   Address of listing to simulate removal
+--recheck          Recheck inactive listings and reactivate if available
+--clear            Delete all existing Discord messages
+--subo             Run only SUBO scraper
+--dios             Run only Dios scraper
 ```
-
-#### How it works
-- Use `--debug --remove` to mark a listing as inactive in `listings.json`
-- Running the script again will:
-  - Load all listings including inactive ones
-  - Update Discord messages for inactive listings (strikethrough, red color)
-  - Keep inactive listings marked as removed
-- Useful for testing how the script handles removed listings over multiple runs
-
-**Note:** The script will update existing Discord messages rather than sending new ones for inactive listings.
-
 ### Listing States
 
 #### Active (true)
