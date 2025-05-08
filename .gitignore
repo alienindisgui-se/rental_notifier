@@ -1,4 +1,4 @@
 debug_output/
-listings.json
-__pycache__
-config.py
+__pycache__/
+*.pyc
+secrets.py
