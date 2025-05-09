@@ -40,7 +40,7 @@ jobs:
               workflow_id: workflowName + '.yml', // Append .yml as listWorkflowRunsForRepo expects filename
               status: 'success', // Only consider successful runs
               per_page: 1, // We only need the most recent one
-              event: 'schedule,workflow_dispatch' # Filter by relevant events
+              event: 'schedule,workflow_dispatch' // Filter by relevant events
             });
 
             const latestSuccessfulRun = listRunsResponse.data.workflow_runs[0];
@@ -75,7 +75,7 @@ jobs:
     # Initialize listings file if download failed or no previous run was found
     - name: Initialize listings file if not downloaded
       # This step runs if the download step was skipped (no run_id) or if it failed
-      if: steps.find-run.outputs.outputs.run_id == '' || steps.download-artifact.outcome != 'success'
+      if: steps.find-run.outputs.run_id == '' || steps.download-artifact.outcome != 'success'
       run: |
         echo "[]" > listings.json
         echo "Initialized new empty listings.json file because previous artifact was not downloaded."
