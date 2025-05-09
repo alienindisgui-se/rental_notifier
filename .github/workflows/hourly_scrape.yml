@@ -8,10 +8,10 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -23,25 +23,41 @@ jobs:
       continue-on-error: true
       with:
         name: listings
-        path: .
-        
+        github-token: ${{ secrets.GITHUB_TOKEN }} # Required to fetch artifacts from other runs
+        workflow: Hourly Rental Scraping          # Specify the workflow name
+        path: .                                   # Download to the current directory
+
+    - name: List files after download # Added for debugging
+      run: ls -R
+
+    - name: Check if listings.json exists # Added for debugging
+      run: |
+        if [ -f listings.json ]; then
+          echo "listings.json exists after download!"
+        else
+          echo "listings.json does NOT exist after download."
+        fi
+
     - name: Initialize listings file
       run: |
         if [ ! -f listings.json ]; then
           echo "[]" > listings.json
+          echo "Created empty listings.json file." # Added logging
+        else
+          echo "listings.json already exists." # Added logging
         fi
-        
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4 discord.py
-        
+
     - name: Run scraper
       env:
         DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
       run: python main.py
-        
+
     - name: Upload new listings
       uses: actions/upload-artifact@v4
       with:
