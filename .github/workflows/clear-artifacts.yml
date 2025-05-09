@@ -1,0 +1,56 @@
+name: Clear Artifacts
+
+on:
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # Required to delete artifacts
+
+    steps:
+      - name: List and Delete Artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const artifactName = 'listings'; // Specify the name of the artifact to delete
+
+            console.log(`Searching for artifacts named '${artifactName}' in ${owner}/${repo}`);
+
+            try {
+              // List artifacts for the repository
+              const listArtifactsResponse = await github.rest.actions.listArtifactsForRepo({
+                owner,
+                repo,
+              });
+
+              const artifactsToDelete = listArtifactsResponse.data.artifacts.filter(
+                artifact => artifact.name === artifactName
+              );
+
+              if (artifactsToDelete.length === 0) {
+                console.log(`No artifacts found with the name '${artifactName}'.`);
+                return;
+              }
+
+              console.log(`Found ${artifactsToDelete.length} artifact(s) with the name '${artifactName}'. Deleting...`);
+
+              for (const artifact of artifactsToDelete) {
+                console.log(`Deleting artifact: ${artifact.name} (ID: ${artifact.id})`);
+                await github.rest.actions.deleteArtifact({
+                  owner,
+                  repo,
+                  artifact_id: artifact.id,
+                });
+                console.log(`Deleted artifact: ${artifact.id}`);
+              }
+
+              console.log('Finished deleting artifacts.');
+
+            } catch (error) {
+              console.error('Error listing or deleting artifacts:', error);
+              core.setFailed(`Failed to clear artifacts: ${error.message}`);
+            }
