@@ -60,3 +60,21 @@ Once inactive:
 - Discord message shows strikethrough and red color
 - Won't be reactivated even if found again in scraping
 - Useful for manually removing test/duplicate listings
+
+## Discord Purge Bot
+
+A utility bot that allows administrators to clean up messages in the rental notification channel.
+
+### Commands
+
+- `!purge <number|all>` - Delete messages from the channel
+  - `number`: Delete a specific number of messages (1-100)
+  - `all`: Delete all messages in the channel
+  - Only administrators can use this command
+  - Only works in the designated rental notification channel
+
+Example usage:
+```
+!purge 10    # Deletes last 10 messages
+!purge all   # Deletes all messages
+```

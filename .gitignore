@@ -1,4 +1,5 @@
 debug_output/
 __pycache__/
 *.pyc
-secrets.py
+app_secrets.py
+listings.json
