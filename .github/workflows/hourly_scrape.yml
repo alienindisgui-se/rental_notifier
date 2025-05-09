@@ -17,12 +17,24 @@ jobs:
       with:
         python-version: '3.10'
         
+    - name: Create listings file if not exists
+      run: |
+        if [ ! -f listings.json ]; then
+          echo "[]" > listings.json
+        fi
+        
     - name: Download previous listings
       uses: actions/download-artifact@v4
-      continue-on-error: true
+      continue-on-error: true  # Don't fail if no previous artifact exists
       with:
-        name: listings-json
-        path: .
+        name: listings
+        path: ./previous
+        
+    - name: Copy previous listings if exists
+      run: |
+        if [ -f ./previous/listings.json ]; then
+          cp ./previous/listings.json ./listings.json
+        fi
         
     - name: Install dependencies
       run: |
@@ -35,9 +47,9 @@ jobs:
         DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
       run: python main.py
         
-    - name: Upload listings
+    - name: Upload new listings
       uses: actions/upload-artifact@v4
       with:
-        name: listings-json
+        name: listings
         path: listings.json
-        retention-days: 7
+        retention-days: 30
