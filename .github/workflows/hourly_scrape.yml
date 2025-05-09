@@ -17,39 +17,22 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Download previous listings
-      id: download-artifact
+    - name: Try to download previous artifact
       uses: actions/download-artifact@v4
-      continue-on-error: true # Allow workflow to continue if no artifact is found (e.g., first run)
+      continue-on-error: true
       with:
         name: listings
-        github-token: ${{ secrets.GITHUB_TOKEN }} # Required for cross-run access
-        workflow: Hourly Rental Scraping          # The name of your workflow
-        branch: ${{ github.ref_name }}            # Explicitly target the current branch
-        # Omit run-id - the action should find the latest run on the specified workflow+branch
-        path: .                                   # Download to the current directory
+        path: .
+        github-token: ${{ secrets.GITHUB_TOKEN }}
 
-    # Debugging steps - keep them for now to verify the download
-    - name: List files after download
-      run: ls -R
-
-    - name: Check if listings.json exists
-      run: |
-        if [ -f listings.json ]; then
-          echo "listings.json exists after download!"
-        else
-          echo "listings.json does NOT exist after download."
-        fi
-
-    - name: Initialize listings file # This step will now only run if the artifact download truly failed/found nothing
+    - name: Initialize listings file
       run: |
         if [ ! -f listings.json ]; then
           echo "[]" > listings.json
-          echo "Created empty listings.json file because no previous artifact was found." # Added logging
+          echo "Created new empty listings.json file"
         else
-          echo "Previous listings.json artifact found." # Updated logging
+          echo "Using existing listings.json file"
         fi
-
 
     - name: Install dependencies
       run: |
@@ -62,9 +45,10 @@ jobs:
         DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
       run: python main.py
 
-    - name: Upload new listings
+    - name: Upload listings artifact
       uses: actions/upload-artifact@v4
       with:
         name: listings
         path: listings.json
         retention-days: 30
+        overwrite: true
