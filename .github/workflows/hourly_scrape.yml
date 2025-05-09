@@ -20,12 +20,13 @@ jobs:
     - name: Download previous listings
       id: download-artifact
       uses: actions/download-artifact@v4
-      continue-on-error: true
+      continue-on-error: true # Allow the workflow to continue if no artifact is found
       with:
         name: listings
         path: .
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        search-artifacts: true  # Enable searching through all artifacts
+        # Removed 'search-artifacts: true' as it's not a valid input for v4
+        # v4 primarily downloads artifacts from the current run unless run-id is specified.
+        # The continue-on-error and subsequent steps handle the case where no artifact exists.
 
     # Simplify debugging steps to just check file existence
     - name: Check listings file
@@ -40,6 +41,7 @@ jobs:
         fi
 
     - name: Initialize listings file
+      # Only run this step if the listings file was not found
       if: steps.check-file.outputs.listings_exists != 'true'
       run: |
         echo "[]" > listings.json
