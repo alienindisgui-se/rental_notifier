@@ -17,22 +17,33 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Try to download previous artifact
+    - name: Download previous listings
+      id: download-artifact
       uses: actions/download-artifact@v4
       continue-on-error: true
       with:
         name: listings
         path: .
         github-token: ${{ secrets.GITHUB_TOKEN }}
+        search-artifacts: true  # Enable searching through all artifacts
+
+    # Simplify debugging steps to just check file existence
+    - name: Check listings file
+      id: check-file
+      run: |
+        if [ -f listings.json ]; then
+          echo "listings_exists=true" >> $GITHUB_OUTPUT
+          echo "Found existing listings.json"
+        else
+          echo "listings_exists=false" >> $GITHUB_OUTPUT
+          echo "No existing listings.json found"
+        fi
 
     - name: Initialize listings file
+      if: steps.check-file.outputs.listings_exists != 'true'
       run: |
-        if [ ! -f listings.json ]; then
-          echo "[]" > listings.json
-          echo "Created new empty listings.json file"
-        else
-          echo "Using existing listings.json file"
-        fi
+        echo "[]" > listings.json
+        echo "Created new empty listings.json file"
 
     - name: Install dependencies
       run: |
@@ -45,10 +56,9 @@ jobs:
         DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
       run: python main.py
 
-    - name: Upload listings artifact
+    - name: Upload new listings
       uses: actions/upload-artifact@v4
       with:
         name: listings
         path: listings.json
         retention-days: 30
-        overwrite: true
