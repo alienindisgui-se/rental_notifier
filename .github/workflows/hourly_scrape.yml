@@ -16,24 +16,19 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+
+    - name: Download previous listings
+      id: download-artifact
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: listings
+        path: .
         
-    - name: Create listings file if not exists
+    - name: Initialize listings file
       run: |
         if [ ! -f listings.json ]; then
           echo "[]" > listings.json
-        fi
-        
-    - name: Download previous listings
-      uses: actions/download-artifact@v4
-      continue-on-error: true  # Don't fail if no previous artifact exists
-      with:
-        name: listings
-        path: ./previous
-        
-    - name: Copy previous listings if exists
-      run: |
-        if [ -f ./previous/listings.json ]; then
-          cp ./previous/listings.json ./listings.json
         fi
         
     - name: Install dependencies
