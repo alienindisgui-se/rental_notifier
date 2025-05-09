@@ -20,17 +20,20 @@ jobs:
     - name: Download previous listings
       id: download-artifact
       uses: actions/download-artifact@v4
-      continue-on-error: true
+      continue-on-error: true # Allow workflow to continue if no artifact is found (e.g., first run)
       with:
         name: listings
-        github-token: ${{ secrets.GITHUB_TOKEN }} # Required to fetch artifacts from other runs
-        workflow: Hourly Rental Scraping          # Specify the workflow name
+        github-token: ${{ secrets.GITHUB_TOKEN }} # Required for cross-run access
+        workflow: Hourly Rental Scraping          # The name of your workflow
+        branch: ${{ github.ref_name }}            # Explicitly target the current branch
+        # Omit run-id - the action should find the latest run on the specified workflow+branch
         path: .                                   # Download to the current directory
 
-    - name: List files after download # Added for debugging
+    # Debugging steps - keep them for now to verify the download
+    - name: List files after download
       run: ls -R
 
-    - name: Check if listings.json exists # Added for debugging
+    - name: Check if listings.json exists
       run: |
         if [ -f listings.json ]; then
           echo "listings.json exists after download!"
@@ -38,14 +41,15 @@ jobs:
           echo "listings.json does NOT exist after download."
         fi
 
-    - name: Initialize listings file
+    - name: Initialize listings file # This step will now only run if the artifact download truly failed/found nothing
       run: |
         if [ ! -f listings.json ]; then
           echo "[]" > listings.json
-          echo "Created empty listings.json file." # Added logging
+          echo "Created empty listings.json file because no previous artifact was found." # Added logging
         else
-          echo "listings.json already exists." # Added logging
+          echo "Previous listings.json artifact found." # Updated logging
         fi
+
 
     - name: Install dependencies
       run: |
