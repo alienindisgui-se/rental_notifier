@@ -26,30 +26,35 @@ jobs:
       with:
         script: |
           const { owner, repo } = context.repo;
-          const workflowId = context.workflow;
           
-          console.log(`Debug - Repository: ${owner}/${repo}`);
-          console.log(`Debug - Workflow ID: ${workflowId}`);
-
           try {
-            const listRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
+            // Use the workflow file path instead of name
+            const workflowPath = '.github/workflows/hourly_scrape.yml';
+            
+            console.log(`Debug - Repository: ${owner}/${repo}`);
+            console.log(`Debug - Workflow path: ${workflowPath}`);
+
+            const listRunsResponse = await github.rest.actions.listWorkflowRuns({
               owner,
               repo,
-              workflow_id: workflowId,
+              workflow_id: workflowPath,
               status: 'success',
-              per_page: 5,
-              event: 'schedule,workflow_dispatch'
+              per_page: 5
             });
 
             console.log(`Debug - Found ${listRunsResponse.data.total_count} workflow runs`);
             console.log(`Debug - Response data:`, JSON.stringify(listRunsResponse.data, null, 2));
 
-            const latestSuccessfulRun = listRunsResponse.data.workflow_runs[0];
-            if (latestSuccessfulRun) {
-              console.log(`Found latest successful run: ID ${latestSuccessfulRun.id}`);
-              core.setOutput('run_id', latestSuccessfulRun.id);
+            // Get the previous run (not the current one)
+            const runs = listRunsResponse.data.workflow_runs;
+            const currentRunId = process.env.GITHUB_RUN_ID;
+            const previousRun = runs.find(run => run.id.toString() !== currentRunId);
+
+            if (previousRun) {
+              console.log(`Found previous successful run: ID ${previousRun.id}`);
+              core.setOutput('run_id', previousRun.id.toString());
             } else {
-              console.log('No successful runs found');
+              console.log('No previous successful runs found');
               core.setOutput('run_id', '');
             }
           } catch (error) {
