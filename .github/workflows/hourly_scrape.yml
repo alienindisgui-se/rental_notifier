@@ -1,9 +1,9 @@
 name: Hourly Rental Scraping
 
 on:
-  schedule:
-    - cron: '0 4-17 * * *'
-  workflow_dispatch:
+   schedule:
+     - cron: '0 4-17 * * *'
+   workflow_dispatch:
 
 jobs:
   scrape:
@@ -70,6 +70,7 @@ jobs:
 
     - name: Download artifact
       id: download
+      continue-on-error: true
       uses: actions/download-artifact@v4
       with:
         name: listings
@@ -78,20 +79,20 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         run-id: ${{ steps.find_artifacts.outputs.run_id }}
 
-    - name: Initialize empty file if no artifact
-      if: steps.find_artifacts.outputs.run_id == ''
+    - name: Initialize empty file if no artifact or download failed
+      if: steps.find_artifacts.outputs.run_id == '' || steps.download.outcome == 'failure'
       run: |
         echo "[]" > listings.json
-        echo "Initialized new empty listings.json file because no previous artifacts were found."
+        echo "Initialized new empty listings.json file because no previous artifacts were found or download failed."
 
-    - name: Verify artifact download
-      if: steps.find_artifacts.outputs.run_id != ''
+    - name: Verify listings file exists
       run: |
         if [ ! -f "listings.json" ]; then
-          echo "Error: listings.json was not downloaded successfully"
-          exit 1
+          echo "Error: listings.json does not exist"
+          echo "[]" > listings.json
+          echo "Created empty listings.json as fallback"
         fi
-        echo "Successfully loaded previous listings.json"
+        echo "listings.json is ready"
 
     - name: Install dependencies
       run: |
