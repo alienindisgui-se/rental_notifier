@@ -1,8 +1,8 @@
 name: Hourly Rental Scraping
 
 on:
-  schedule:
-    - cron: '0 * * * *'
+  # schedule:
+  #   - cron: '0 4-17 * * *'  # Will uncomment later when ready for auto-triggers
   workflow_dispatch:
 
 jobs:
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read # Required to list workflow runs and download artifacts
+      actions: read
 
     steps:
     - uses: actions/checkout@v4
@@ -20,61 +20,63 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Find latest successful workflow run on master branch
+    - name: Find latest successful workflow run
       id: find-run
       uses: actions/github-script@v7
       with:
         script: |
           const { owner, repo } = context.repo;
-          const workflowFileName = 'hourly_scrape.yml'; // The name of this workflow file
-          const targetBranch = 'master'; // Specify the branch where successful runs with artifacts occur
-
-          console.log(`Searching for latest successful run of workflow '${workflowFileName}' on branch '${targetBranch}' in ${owner}/${repo}`);
-
+          
           try {
-            // List recent runs for this workflow on the target branch
+            // Use the workflow file path instead of name
+            const workflowPath = '.github/workflows/hourly_scrape.yml';
+            
+            console.log(`Debug - Repository: ${owner}/${repo}`);
+            console.log(`Debug - Workflow path: ${workflowPath}`);
+
             const listRunsResponse = await github.rest.actions.listWorkflowRuns({
               owner,
               repo,
-              workflow_id: workflowFileName,
-              branch: targetBranch, // Filter by the specified target branch
-              status: 'success', // Only consider successful runs
-              per_page: 1, // We only need the most recent one
+              workflow_id: workflowPath,
+              status: 'success',
+              per_page: 5
             });
 
-            const latestSuccessfulRun = listRunsResponse.data.workflow_runs[0];
+            console.log(`Debug - Found ${listRunsResponse.data.total_count} workflow runs`);
+            console.log(`Debug - Response data:`, JSON.stringify(listRunsResponse.data, null, 2));
 
-            if (latestSuccessfulRun) {
-              console.log(`Found latest successful run: ID ${latestSuccessfulRun.id}`);
-              core.setOutput('run_id', latestSuccessfulRun.id);
+            // Get the previous run (not the current one)
+            const runs = listRunsResponse.data.workflow_runs;
+            const currentRunId = process.env.GITHUB_RUN_ID;
+            const previousRun = runs.find(run => run.id.toString() !== currentRunId);
+
+            if (previousRun) {
+              console.log(`Found previous successful run: ID ${previousRun.id}`);
+              core.setOutput('run_id', previousRun.id.toString());
             } else {
-              console.log(`No previous successful run found for workflow '${workflowFileName}' on branch '${targetBranch}'.`);
-              core.setOutput('run_id', ''); // Output empty if no run found
+              console.log('No previous successful runs found');
+              core.setOutput('run_id', '');
             }
-
           } catch (error) {
             console.error('Error finding latest successful run:', error);
-            core.setFailed(`Failed to find latest successful run: ${error.message}`);
+            core.setOutput('run_id', '');
           }
 
-    - name: Download previous listings
+    - name: Download previous listings artifact
       id: download-artifact
       uses: actions/download-artifact@v4
-      # Continue on error in case no previous successful run was found or artifact expired
       continue-on-error: true
-      if: steps.find-run.outputs.run_id != '' # Only attempt download if a run_id was found
+      if: steps.find-run.outputs.run_id != ''
       with:
         name: listings
         path: .
-        run-id: ${{ steps.find-run.outputs.run_id }} # Use the found run_id
+        run-id: ${{ steps.find-run.outputs.run_id }}
 
-    # Initialize listings file if download failed or no previous run was found
     - name: Initialize listings file if not downloaded
-      # This step runs if the download step was skipped (no run_id) or if it failed
       if: steps.find-run.outputs.run_id == '' || steps.download-artifact.outcome != 'success'
       run: |
         echo "[]" > listings.json
-        echo "Initialized new empty listings.json file."
+        echo "Initialized new empty listings.json file because previous artifact was not downloaded."
 
     - name: Install dependencies
       run: |
@@ -87,7 +89,7 @@ jobs:
         DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
       run: python main.py
 
-    - name: Upload new listings
+    - name: Upload new listings artifact
       uses: actions/upload-artifact@v4
       with:
         name: listings
