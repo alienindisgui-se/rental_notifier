@@ -69,8 +69,8 @@ jobs:
           }
 
     - name: Download artifact
+      id: download
       uses: actions/download-artifact@v4
-      continue-on-error: true
       with:
         name: listings
         path: .
@@ -79,10 +79,19 @@ jobs:
         run-id: ${{ steps.find_artifacts.outputs.run_id }}
 
     - name: Initialize empty file if no artifact
-      if: steps.download.outcome != 'success'
+      if: steps.find_artifacts.outputs.run_id == ''
       run: |
         echo "[]" > listings.json
-        echo "Initialized new empty listings.json file because previous artifact was not downloaded."
+        echo "Initialized new empty listings.json file because no previous artifacts were found."
+
+    - name: Verify artifact download
+      if: steps.find_artifacts.outputs.run_id != ''
+      run: |
+        if [ ! -f "listings.json" ]; then
+          echo "Error: listings.json was not downloaded successfully"
+          exit 1
+        fi
+        echo "Successfully loaded previous listings.json"
 
     - name: Install dependencies
       run: |
