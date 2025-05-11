@@ -20,21 +20,17 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Find latest successful workflow run
-      id: find-run
+    - name: Find previous successful run with artifacts
+      id: find_artifacts
       uses: actions/github-script@v7
       with:
         script: |
           const { owner, repo } = context.repo;
           
           try {
-            // Use the workflow file path instead of name
+            // Get list of workflow runs
             const workflowPath = '.github/workflows/hourly_scrape.yml';
-            
-            console.log(`Debug - Repository: ${owner}/${repo}`);
-            console.log(`Debug - Workflow path: ${workflowPath}`);
-
-            const listRunsResponse = await github.rest.actions.listWorkflowRuns({
+            const runs = await github.rest.actions.listWorkflowRuns({
               owner,
               repo,
               workflow_id: workflowPath,
@@ -42,38 +38,48 @@ jobs:
               per_page: 5
             });
 
-            console.log(`Debug - Found ${listRunsResponse.data.total_count} workflow runs`);
-            console.log(`Debug - Response data:`, JSON.stringify(listRunsResponse.data, null, 2));
+            // Get current run ID
+            const currentRunId = context.runId;
+            
+            // Find previous successful run that has artifacts
+            for (const run of runs.data.workflow_runs) {
+              if (run.id.toString() === currentRunId.toString()) {
+                continue;
+              }
 
-            // Get the previous run (not the current one)
-            const runs = listRunsResponse.data.workflow_runs;
-            const currentRunId = process.env.GITHUB_RUN_ID;
-            const previousRun = runs.find(run => run.id.toString() !== currentRunId);
+              // Check if run has artifacts
+              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                owner,
+                repo,
+                run_id: run.id
+              });
 
-            if (previousRun) {
-              console.log(`Found previous successful run: ID ${previousRun.id}`);
-              core.setOutput('run_id', previousRun.id.toString());
-            } else {
-              console.log('No previous successful runs found');
-              core.setOutput('run_id', '');
+              if (artifacts.data.artifacts.length > 0) {
+                console.log(`Found run ${run.id} with ${artifacts.data.artifacts.length} artifacts`);
+                core.setOutput('run_id', run.id.toString());
+                return;
+              }
             }
+
+            console.log('No previous runs with artifacts found');
+            core.setOutput('run_id', '');
           } catch (error) {
-            console.error('Error finding latest successful run:', error);
+            console.error('Error finding artifacts:', error);
             core.setOutput('run_id', '');
           }
 
-    - name: Download previous listings artifact
-      id: download-artifact
+    - name: Download artifact
       uses: actions/download-artifact@v4
       continue-on-error: true
-      if: steps.find-run.outputs.run_id != ''
       with:
         name: listings
         path: .
-        run-id: ${{ steps.find-run.outputs.run_id }}
+        repository: ${{ github.repository }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        run-id: ${{ steps.find_artifacts.outputs.run_id }}
 
-    - name: Initialize listings file if not downloaded
-      if: steps.find-run.outputs.run_id == '' || steps.download-artifact.outcome != 'success'
+    - name: Initialize empty file if no artifact
+      if: steps.download.outcome != 'success'
       run: |
         echo "[]" > listings.json
         echo "Initialized new empty listings.json file because previous artifact was not downloaded."
