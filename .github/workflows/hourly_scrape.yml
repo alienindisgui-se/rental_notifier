@@ -1,8 +1,8 @@
 name: Hourly Rental Scraping
 
 on:
-  schedule:
-    - cron: '0 * * * *'
+  # schedule:
+  #   - cron: '0 4-17 * * *'  # Will uncomment later when ready for auto-triggers
   workflow_dispatch:
 
 jobs:
